@@ -1,0 +1,13 @@
+# Core ML stack
+tensorflow>=2.10,<2.16
+numpy>=1.23,<2.0
+pandas>=1.5,<3.0
+scikit-learn>=1.2,<1.6
+h5py>=3.7
+
+# Imaging and plotting
+Pillow>=9.3
+matplotlib>=3.6,<3.9
+
+# Optional: Spark/HDFS if needed
+# pyspark>=3.3
