@@ -1,4 +1,5 @@
 import os
+import glob
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -38,6 +39,7 @@ class CsvImageDataset:
     CSV phải chứa các cột: study_id, image_id (không đuôi) và breast_birads (label)
     '''
     def __init__(self, spark, dataset_path, csv_path, image_shape=(128, 128), channels=3):
+        # spark can be None for local mode
         self.spark = spark
         self.dataset_path = dataset_path
         self.csv_path = csv_path
@@ -45,42 +47,106 @@ class CsvImageDataset:
         self.channels = channels
 
     def load_images_and_labels(self):
-        '''Đọc tất cả ảnh từ HDFS theo danh sách trong CSV và trả về numpy arrays images, labels'''
-        # Đọc CSV từ HDFS
-        df = self.spark.read.csv(self.csv_path, header=True).collect()
+        '''Đọc ảnh và nhãn. Tự động dùng Spark nếu có, ngược lại đọc local.'''
+        if self.spark is not None:
+            # Đọc CSV từ HDFS bằng Spark
+            df = self.spark.read.csv(self.csv_path, header=True).collect()
 
-        # Tạo dictionary cho nhãn
+            # Tạo dictionary cho nhãn
+            label_dict = {}
+            for row in df:
+                study_id = row['study_id']
+                image_id = row['image_id']
+                breast_birads = row['breast_birads']
+                birads_num = int(re.search(r'\d+', breast_birads).group())
+                # Chuyển đổi nhãn: 3 -> 0, 4 -> 1, otherwise -> 2
+                label = 0 if birads_num == 3 else 1 if birads_num == 4 else 2
+                label_dict[(study_id, image_id)] = label
+
+            # Tải ảnh từ HDFS qua Spark
+            images_rdd = self.spark.sparkContext.binaryFiles(self.dataset_path)
+            images_list = images_rdd.collect()
+
+            images = []
+            labels = []
+            for filename, content in images_list:
+                basename = os.path.basename(filename)
+                parts = basename.split('_')
+                if len(parts) < 2:
+                    continue
+                study_id = parts[0]
+                image_id = '_'.join(parts[1:]).split('.')[0]
+                key = (study_id, image_id)
+                if key in label_dict:
+                    label = label_dict[key]
+                    image_array = load_image_from_bytes(content, self.image_shape, self.channels)
+                    if image_array is not None:
+                        images.append(image_array)
+                        labels.append(label)
+
+            images = np.array(images)
+            labels = np.array(labels, dtype=np.int32)
+            return images, labels
+
+        # Local mode: đọc CSV bằng pandas và ảnh từ filesystem
+        if not os.path.exists(self.csv_path):
+            raise FileNotFoundError(f"CSV file not found: {self.csv_path}")
+        if not os.path.exists(self.dataset_path):
+            raise FileNotFoundError(f"Dataset directory not found: {self.dataset_path}")
+
+        df = pd.read_csv(self.csv_path)
+        required_cols = {"study_id", "image_id", "breast_birads"}
+        if not required_cols.issubset(set(df.columns)):
+            raise ValueError(f"CSV missing required columns: {required_cols}")
+
         label_dict = {}
-        for row in df:
-            study_id = row['study_id']
-            image_id = row['image_id']
-            breast_birads = row['breast_birads']
-            birads_num = int(re.search(r'\d+', breast_birads).group())
-            # Chuyển đổi nhãn: 3 -> 0, 4 -> 1, otherwise -> 2
+        for _, row in df.iterrows():
+            study_id = str(row["study_id"]).strip()
+            image_id = str(row["image_id"]).strip()
+            breast_birads = str(row["breast_birads"]) if not pd.isna(row["breast_birads"]) else ""
+            match = re.search(r"\d+", breast_birads)
+            if match is None:
+                continue
+            birads_num = int(match.group())
             label = 0 if birads_num == 3 else 1 if birads_num == 4 else 2
             label_dict[(study_id, image_id)] = label
 
-        # Tải ảnh từ HDFS
-        images_rdd = self.spark.sparkContext.binaryFiles(self.dataset_path)
-        images_list = images_rdd.collect()
+        image_file_patterns = [
+            os.path.join(self.dataset_path, "**", "*.png"),
+            os.path.join(self.dataset_path, "**", "*.jpg"),
+            os.path.join(self.dataset_path, "**", "*.jpeg"),
+            os.path.join(self.dataset_path, "**", "*.bmp"),
+        ]
+        file_list = []
+        for pattern in image_file_patterns:
+            file_list.extend(glob.glob(pattern, recursive=True))
 
-        # Xử lý ảnh và gán nhãn
         images = []
         labels = []
-        for filename, content in images_list:
-            basename = os.path.basename(filename)
+        for filepath in file_list:
+            basename = os.path.basename(filepath)
             parts = basename.split('_')
             if len(parts) < 2:
                 continue
             study_id = parts[0]
-            image_id = '_'.join(parts[1:]).split('.')[0]  
+            image_id = '_'.join(parts[1:]).split('.')[0]
             key = (study_id, image_id)
             if key in label_dict:
                 label = label_dict[key]
-                image_array = load_image_from_bytes(content, self.image_shape, self.channels)
-                if image_array is not None:
-                    images.append(image_array)
+                try:
+                    image = Image.open(filepath)
+                    if self.channels == 3 and image.mode != 'RGB':
+                        image = image.convert('RGB')
+                    elif self.channels == 1 and image.mode != 'L':
+                        image = image.convert('L')
+                    image = image.resize(self.image_shape)
+                    img_array = np.array(image, dtype=np.float32) / 255.0
+                    if img_array.shape[-1] != self.channels:
+                        continue
+                    images.append(img_array)
                     labels.append(label)
+                except Exception as e:
+                    print(f"Lỗi khi đọc ảnh local {filepath}: {e}")
 
         images = np.array(images)
         labels = np.array(labels, dtype=np.int32)

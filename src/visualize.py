@@ -2,7 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report
 import os
-from pyspark.sql import SparkSession
+try:
+    from pyspark.sql import SparkSession  # Optional for local runs
+except Exception:
+    SparkSession = None
 
 def save_to_hdfs(hdfs_path, content, spark):
     """Save file to HDFS using Hadoop FileSystem API."""
@@ -80,9 +83,10 @@ def verify_png_file(file_path):
         print(f"Error verifying PNG file {file_path}: {e}")
         return False
 
-def plot_training_history(history, model_name, save_dir='hdfs://172.20.201.155:9000/user/ubuntu/result/giabao/plots', spark=None):
-    if spark is None:
-        spark = SparkSession.builder.getOrCreate()
+def plot_training_history(history, model_name, save_dir='results', spark=None):
+    # If saving to local folder
+    if spark is None or (isinstance(save_dir, str) and not save_dir.startswith('hdfs://')):
+        os.makedirs(save_dir, exist_ok=True)
     
     try:
         train_loss = history.history['loss']
@@ -111,7 +115,11 @@ def plot_training_history(history, model_name, save_dir='hdfs://172.20.201.155:9
         
         if verify_png_file(tmp_loss_path):
             print(f"PNG file verified: {tmp_loss_path}")
-            save_to_hdfs(f"{save_dir}/{model_name}_loss_plot_original.png", tmp_loss_path, spark)
+            if spark is not None and isinstance(save_dir, str) and save_dir.startswith('hdfs://'):
+                save_to_hdfs(f"{save_dir}/{model_name}_loss_plot_original.png", tmp_loss_path, spark)
+            else:
+                local_path = os.path.join(save_dir, f"{model_name}_loss_plot.png")
+                os.replace(tmp_loss_path, local_path)
         else:
             raise Exception(f"Generated PNG file is invalid: {tmp_loss_path}")
         
@@ -133,7 +141,11 @@ def plot_training_history(history, model_name, save_dir='hdfs://172.20.201.155:9
         
         if verify_png_file(tmp_acc_path):
             print(f"PNG file verified: {tmp_acc_path}")
-            save_to_hdfs(f"{save_dir}/{model_name}_accuracy_plot_original.png", tmp_acc_path, spark)
+            if spark is not None and isinstance(save_dir, str) and save_dir.startswith('hdfs://'):
+                save_to_hdfs(f"{save_dir}/{model_name}_accuracy_plot_original.png", tmp_acc_path, spark)
+            else:
+                local_path = os.path.join(save_dir, f"{model_name}_accuracy_plot.png")
+                os.replace(tmp_acc_path, local_path)
         else:
             raise Exception(f"Generated PNG file is invalid: {tmp_acc_path}")
         
@@ -143,9 +155,9 @@ def plot_training_history(history, model_name, save_dir='hdfs://172.20.201.155:9
         print(f"Error plotting training history for {model_name}: {e}")
         raise
 
-def plot_confusion_matrix(y_true, y_pred, model_name, save_dir='hdfs://172.20.201.155:9000/user/ubuntu/result/giabao/plots', spark=None):
-    if spark is None:
-        spark = SparkSession.builder.getOrCreate()
+def plot_confusion_matrix(y_true, y_pred, model_name, save_dir='results', spark=None):
+    if spark is None or (isinstance(save_dir, str) and not save_dir.startswith('hdfs://')):
+        os.makedirs(save_dir, exist_ok=True)
     
     try:
         cm = confusion_matrix(y_true, y_pred)
@@ -180,7 +192,11 @@ def plot_confusion_matrix(y_true, y_pred, model_name, save_dir='hdfs://172.20.20
         
         if verify_png_file(tmp_cm_path):
             print(f"PNG file verified: {tmp_cm_path}")
-            save_to_hdfs(f"{save_dir}/{model_name}_confusion_matrix_original.png", tmp_cm_path, spark)
+            if spark is not None and isinstance(save_dir, str) and save_dir.startswith('hdfs://'):
+                save_to_hdfs(f"{save_dir}/{model_name}_confusion_matrix_original.png", tmp_cm_path, spark)
+            else:
+                local_path = os.path.join(save_dir, f"{model_name}_confusion_matrix.png")
+                os.replace(tmp_cm_path, local_path)
         else:
             raise Exception(f"Generated PNG file is invalid: {tmp_cm_path}")
         
@@ -190,9 +206,9 @@ def plot_confusion_matrix(y_true, y_pred, model_name, save_dir='hdfs://172.20.20
         print(f"Error plotting confusion matrix for {model_name}: {e}")
         raise
 
-def generate_classification_report(y_true, y_pred, model_name, save_dir='hdfs://172.20.201.155:9000/user/ubuntu/result/giabao/plots', spark=None):
-    if spark is None:
-        spark = SparkSession.builder.getOrCreate()
+def generate_classification_report(y_true, y_pred, model_name, save_dir='results', spark=None):
+    if spark is None or (isinstance(save_dir, str) and not save_dir.startswith('hdfs://')):
+        os.makedirs(save_dir, exist_ok=True)
     
     try:
         class_names = ['Benign', 'Malignant', 'Normal']
@@ -206,10 +222,19 @@ def generate_classification_report(y_true, y_pred, model_name, save_dir='hdfs://
 
 Model: {model_name}
 Total Samples: {len(y_true)}
-Generated on: {spark.sql("SELECT current_timestamp()").collect()[0][0]}
 """
-        
-        save_to_hdfs(f"{save_dir}/{model_name}_classification_report.txt", report_content, spark)
+        if spark is not None and isinstance(save_dir, str) and save_dir.startswith('hdfs://'):
+            try:
+                current_ts = spark.sql('SELECT current_timestamp()').collect()[0][0]
+            except Exception:
+                current_ts = ''
+            if current_ts:
+                report_content += f"\nGenerated on: {current_ts}\n"
+            save_to_hdfs(f"{save_dir}/{model_name}_classification_report.txt", report_content, spark)
+        else:
+            local_path = os.path.join(save_dir, f"{model_name}_classification_report.txt")
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(report_content)
         print(f"Classification report saved successfully for {model_name}")
         
         return report
@@ -218,9 +243,9 @@ Generated on: {spark.sql("SELECT current_timestamp()").collect()[0][0]}
         print(f"Error generating classification report for {model_name}: {e}")
         raise
 
-def evaluate_and_visualize(model, X_test, y_test, model_name, save_dir='hdfs://172.20.201.155:9000/user/ubuntu/result/giabao/plots', spark=None):
-    if spark is None:
-        spark = SparkSession.builder.getOrCreate()
+def evaluate_and_visualize(model, X_test, y_test, model_name, save_dir='results', spark=None):
+    if spark is None or (isinstance(save_dir, str) and not save_dir.startswith('hdfs://')):
+        os.makedirs(save_dir, exist_ok=True)
     
     try:
         print(f"Starting evaluation and visualization for {model_name}...")
