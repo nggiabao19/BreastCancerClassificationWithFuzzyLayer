@@ -1,6 +1,6 @@
 # Breast Cancer Classification with Fuzzy Layer  
 
-## Introduction  
+## 📌 Introduction  
 This project focuses on **classifying mammogram images** into three categories:  
 - **Benign**  
 - **Malignant**  
@@ -21,7 +21,7 @@ The goal is to support **early detection of breast cancer** by combining **Deep 
 
 ---
 
-## Model Architecture  
+## 🏗️ Model Architecture  
 - **Baseline**: ResNet50V2 / Xception / MammoViT
 - **Variants**:  
   - **Fuzzy Fully Connected Layer**  
@@ -44,7 +44,7 @@ git clone https://github.com/nggiabao19/BreastCancerClassificationWithFuzzyLayer
 cd BreastCancerClassificationWithFuzzyLayer
 pip install -r requirements.txt
 ```
-## Training
+## ⚒️ Training
 - Before training, take a look in line 12 at `main.py`
 - Replace value of "model_name" with correct model name (it's file name in src/models)
 - After all, run:
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 - [Fuzzy Pooling](https://arxiv.org/abs/2202.08372)
 - [FP-CNN: Fuzzy pooling-based convolutional neural network for lung ultrasound image classification with explainable AI](https://www.sciencedirect.com/science/article/pii/S0010482523008727)
 
-## Author
+## 🐧 Author
 - Bao Nguyen (me)
 - Contact: nggiabao19@gmail.com
 
